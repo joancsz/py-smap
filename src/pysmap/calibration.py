@@ -79,7 +79,8 @@ def calibrate(p: SmapParams, rain: pd.DataFrame, gauges: pd.DataFrame, etp: pd.S
     q = flow.reindex(days[scored]).to_numpy()
     if np.isnan(q).any():
         raise ValueError("flow does not cover the objective period")
-    w = np.full(len(q), 1 / len(q)) if weights is None else np.asarray(weights, dtype=float)
+    q = np.where(q == 0, 0.1, q)  # as assimilation does: MAPE/DM divide by observed flow
+    w =np.full(len(q), 1 / len(q)) if weights is None else np.asarray(weights, dtype=float)
     metric, sign = OBJECTIVES[objective]
 
     shape = dict(zip(("alfa", "ex"), kt_shape)) if kt_shape else {}

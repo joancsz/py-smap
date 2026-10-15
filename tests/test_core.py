@@ -63,3 +63,12 @@ def test_metrics():  # test-metricas.R CT23
     assert metrics.kge(sim, obs) == pytest.approx(0.96774194, rel=1e-7)
     assert metrics.pbias(sim, obs) == pytest.approx(0.96774194, rel=1e-7)
     assert metrics.correlation(sim, obs) == pytest.approx(1)
+
+
+def test_spatial_weighting_rejects_a_missing_gauge_value():
+    gauges = pd.DataFrame({"nome": "A", "posto": ["g1", "g2"], "valor": [0.5, 0.5]})
+    rain = pd.DataFrame({"data": pd.to_datetime(["2020-01-01", "2020-01-01", "2020-01-02"]),
+                         "posto": ["g1", "g2", "g1"], "valor": [2.0, 4.0, 2.0]})
+    with pytest.raises(ValueError, match="missing for sub-basin A"):
+        weighting.spatial(rain, gauges)
+    assert weighting.spatial(rain.iloc[:2], gauges).valor.item() == 3.0

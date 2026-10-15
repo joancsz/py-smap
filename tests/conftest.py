@@ -17,5 +17,8 @@ def _load(name):
 
 @pytest.fixture
 def rdata():
-    """smapOnsR's bundled datasets (data/*.rda), by their R names."""
+    """smapOnsR's bundled datasets (data/*.rda), by their R names.
+
+    Made once with pyreadr: `for name, df in pyreadr.read_r(f).items(): df.to_csv(f"{name}.csv.gz", index=False)`.
+    """
     return _load

@@ -1,4 +1,4 @@
-"""Command line: `pysmap run <case.yml | folder>` and `pysmap evaluate <previsao.csv> <observed.csv>`."""
+"""Command line: `pysmap run|calibrate|validate|evaluate|convert`."""
 from __future__ import annotations
 
 import argparse
@@ -7,9 +7,10 @@ from pathlib import Path
 import pandas as pd
 
 from . import forecast, studies
-from .case import load_case
+from .case import load_case, to_yaml
 from .evaluation import evaluate
 from .io import _csv, _wide_history, read_case
+from .legacy import read_legacy_case
 from .outputs import write_outputs
 from .routing import totalize
 
@@ -17,19 +18,35 @@ MODELS = {"oficial": forecast.OFICIAL, "pmur": forecast.PMUR, "etp": forecast.ET
           "pmur_n_assimila_etp": forecast.PMUR_N_ASSIMILA_ETP}
 
 
+def _is_legacy(folder: Path) -> bool:
+    return any(f.name.lower() == "caso.txt" for f in folder.iterdir())
+
+
+def _folder_inputs(src: Path, model: str | None):
+    """Inputs and config of an ONS legacy deck or a smapOnsR new-format CSV folder."""
+    if _is_legacy(src):
+        if model and model != "oficial":
+            raise SystemExit("legacy ONS decks run the oficial model")
+        return read_legacy_case(src), forecast.OFICIAL
+    inputs = read_case(src)
+    # executa_caso_oficial_v2's choice when no model is given
+    return inputs, MODELS[model] if model else (forecast.PMUR_ETP if inputs.etp_forecast is not None
+                                                else forecast.OFICIAL)
+
+
 def _run(args):
     src = Path(args.case)
+    out_dir = Path(args.output) if args.output else (src if src.is_dir() else src.parent) / "saida"
+    if src.is_dir() and (src / "Arq_Entrada").is_dir():  # executa_caso_oficial's case folder
+        out_dir = Path(args.output) if args.output else src / "Arq_Saida"
+        src, args.ons_txt = src / "Arq_Entrada", True
     if src.is_dir():
-        inputs = read_case(src)
-        # executa_caso_oficial_v2's choice when no model is given
-        config = MODELS[args.model] if args.model else (forecast.PMUR_ETP if inputs.etp_forecast is not None
-                                                       else forecast.OFICIAL)
+        inputs, config = _folder_inputs(src, args.model)
     else:
         if args.model:
-            raise SystemExit("--model applies to CSV folders; set `model:` in the YAML instead")
+            raise SystemExit("--model applies to folders; set `model:` in the YAML instead")
         case = load_case(src)
         inputs, config = case.inputs, case.config
-    out_dir = Path(args.output) if args.output else (src if src.is_dir() else src.parent) / "saida"
     files, qcalc = set(), []
     for i, (name, out) in enumerate(forecast.iter_sub_basins(inputs, config, args.workers)):
         files.update(write_outputs(out, out_dir, ons_txt=args.ons_txt, append=i > 0))
@@ -74,10 +91,15 @@ def _validate(args):
     print(f"wrote {len(files)} files to {out}")
 
 
+def _convert(args):
+    path = to_yaml(*_folder_inputs(Path(args.folder), args.model), args.output)
+    print(f"wrote {path} and its series CSVs")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="pysmap", description="SMAP/ONS rainfall-runoff model")
     sub = ap.add_subparsers(required=True)
-    run = sub.add_parser("run", help="run a case (YAML file or smapOnsR new-format CSV folder)")
+    run = sub.add_parser("run", help="run a case: YAML file, smapOnsR new-format CSV folder or ONS Arq_Entrada")
     run.add_argument("case")
     run.add_argument("-o", "--output", help="output folder (default: <case dir>/saida)")
     run.add_argument("--ons-txt", action="store_true", help="also write ONS _previsao.txt/_ajuste.txt files")
@@ -103,5 +125,10 @@ def main(argv=None):
     ev.add_argument("observed", help="observed flow, wide: data;<sub-basin>;...")
     ev.add_argument("-o", "--output", help="write validacao.csv instead of printing")
     ev.set_defaults(func=_evaluate)
+    conv = sub.add_parser("convert", help="write a CSV folder or ONS Arq_Entrada as a YAML case")
+    conv.add_argument("folder")
+    conv.add_argument("-o", "--output", required=True, help="case.yml to write; series CSVs go next to it")
+    conv.add_argument("--model", choices=MODELS, help="model variant for CSV folders")
+    conv.set_defaults(func=_convert)
     args = ap.parse_args(argv)
     args.func(args)

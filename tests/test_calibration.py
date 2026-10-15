@@ -45,3 +45,9 @@ def test_zero_weights_equal_a_shorter_period(rdata):  # CT22.2
     w = np.where(days >= period[0], 1.0, 0.0)
     full = calibrate(**case, bounds={}, weights=w / w.sum()).objective
     assert full == pytest.approx(short)
+
+
+def test_zero_flow_days_keep_the_objective_finite(rdata):
+    case, _ = _case(rdata)
+    case["flow"] = case["flow"].where(case["flow"].index.month != 9, 0.0)  # a dry month
+    assert np.isfinite(calibrate(**case, bounds={}).objective)

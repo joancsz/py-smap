@@ -40,8 +40,7 @@ def evaluate(forecast: pd.DataFrame, observed: pd.DataFrame, weekly: bool = True
         w["horizonte"] = (w["data_previsao"] - w["inicio"]).dt.days // 7 + 1
         parts.append(_score(w.groupby([*KEYS, "horizonte"], as_index=False)[["prev", "obs"]].mean(), "semanal"))
 
-    if monthly:  # 30-day blocks; missing observations are skipped in the block mean
-        m = f.merge(obs, on=["data_previsao", "nome"], how="left")
-        m["horizonte"] = m["horizonte"] // 30 + 1
+    if monthly:  # 30-day blocks over the days that have both values, so both means cover the same days
+        m = daily.assign(horizonte=daily["horizonte"] // 30 + 1)
         parts.append(_score(m.groupby([*KEYS, "horizonte"], as_index=False)[["prev", "obs"]].mean(), "mensal"))
     return pd.concat(parts, ignore_index=True)

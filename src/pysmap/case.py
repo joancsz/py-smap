@@ -13,8 +13,9 @@ import pandas as pd
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, field_validator, model_validator
 
-from .forecast import Inputs, RunConfig
+from .forecast import Inputs, RunConfig, _init_value
 from .io import _load_series
+from .params import KT_NAMES
 
 Bounds = tuple[float, float]
 OBJECTIVE_CODES = {"dm": 0, "nse": 1, "mape": 2, "kge": 3}
@@ -217,8 +218,6 @@ class Case:
     inputs: Inputs
     config: RunConfig
     spec: CaseFile  # the validated YAML, defaults merged
-    raw: dict  # the YAML as written, to save an edited copy
-    root: Path  # folder the data paths are relative to
 
 
 def _bound_rows(name, var, b):
@@ -247,7 +246,7 @@ def load_case(path: str | Path, run_dates: pd.DataFrame | None = None) -> Case:
     run_dates (data, numero_dias_previsao) replaces the file's run_dates.
     """
     path = Path(path)
-    cf, raw = read_spec(path)
+    cf, _ = read_spec(path)
     root = path.parent
 
     rd = cf.run_dates
@@ -295,4 +294,71 @@ def load_case(path: str | Path, run_dates: pd.DataFrame | None = None) -> Case:
         **_load_series(files, basins, gauges, dates))
     m = cf.model
     return Case(inputs, RunConfig(runoff=m.runoff, etp_source=m.etp, assimilate_etp=m.assimilate_etp,
-                                  assimilate=m.assimilate), cf, raw, root)
+                                  assimilate=m.assimilate), cf)
+
+
+def to_yaml(inputs: Inputs, config: RunConfig, path: str | Path) -> Path:
+    """Write `inputs` as a YAML case at `path`, with its series as CSVs next to it; returns `path`.
+
+    Rain is written already weighted per sub-basin, so each sub-basin has itself as its only gauge.
+    The result is loaded back with `load_case`, so a bad conversion fails here.
+    """
+    path = Path(path)
+    root = path.parent
+    root.mkdir(parents=True, exist_ok=True)
+
+    def wide(df, fname):
+        # shortcut: keeps only dates every sub-basin has; write one case per sub-basin if their spans differ a lot
+        df.pivot(index="data", columns="nome", values="valor").dropna().to_csv(
+            root / fname, sep=";", date_format="%Y-%m-%d")
+        return fname
+
+    def long(df, fname):
+        df[["data_rodada", "data_previsao", "cenario", "nome", "valor"]].to_csv(
+            root / fname, sep=";", index=False, date_format="%Y-%m-%d")
+        return fname
+
+    data = {"precip_observed": wide(inputs.precip_observed, "precipitacao.csv"),
+            "flow_observed": wide(inputs.flow_observed, "vazoes.csv"),
+            "precip_forecast": long(inputs.precip_forecast, "precipitacao_prevista.csv")}
+    if inputs.etp_observed is not None:
+        data["etp_observed"] = wide(inputs.etp_observed, "etp.csv")
+    if inputs.etp_forecast is not None:
+        data["etp_forecast"] = long(inputs.etp_forecast, "evapotranspiracao_prevista.csv")
+
+    yaml_key = {r: Params.model_fields[k].alias or k for k, r in PARAM_NAMES.items()}
+    objective = {v: k for k, v in OBJECTIVE_CODES.items()}
+    init = inputs.initialization
+    sub_basins = {}
+    for name in inputs.sub_basins:
+        p = inputs.parameters[inputs.parameters["nome"] == name]
+        v = dict(zip(p["parametro"], p["valor"].astype(float).tolist()))
+        bounds = {}
+        for var in ("prec", "ebin"):
+            months = {m: [_init_value(init, name, f"limite_{side}_{var}", m) for side in ("inferior", "superior")]
+                      for m in range(1, 13)}
+            bounds[var] = months[1] if all(b == months[1] for b in months.values()) else months
+        sb = {"area": v["Area"],
+              "params": {yaml_key[k]: x for k, x in v.items() if k in yaml_key},
+              "kt": {int(k[2:]): x for k, x in v.items() if k in KT_NAMES and x > 0},
+              "gauges": {name: 1.0},
+              "initial": {"ebin": _init_value(init, name, "Ebin"), "supin": _init_value(init, name, "Supin"),
+                          "tuin": _init_value(init, name, "Tuin") * 100},
+              "assimilation": {
+                  "days": int(_init_value(init, name, "numero_dias_assimilacao")),
+                  "objective": objective[int(_init_value(init, name, "funcao_objetivo", default=0))],
+                  "adjust_last_day": _init_value(init, name, "ajusta_precipitacao", default=0) == 1,
+                  "bounds": bounds}}
+        if inputs.etp_climatology is not None:
+            nc = inputs.etp_climatology[inputs.etp_climatology["nome"] == name].sort_values("mes")
+            sb["etp_climatology"] = [float(x) for x in nc["valor"]]
+        sub_basins[name] = sb
+
+    spec = {"model": {"runoff": config.runoff, "etp": config.etp_source, "assimilate": config.assimilate,
+                      "assimilate_etp": config.assimilate_etp},
+            "run_dates": [{"date": pd.Timestamp(d).date(), "horizon": int(h)}
+                          for d, h in zip(inputs.run_dates["data"], inputs.run_dates["numero_dias_previsao"])],
+            "data": data, "sub_basins": sub_basins}
+    path.write_text(yaml.safe_dump(spec, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    load_case(path)
+    return path

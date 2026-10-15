@@ -19,7 +19,6 @@ pysmap = "pysmap.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8",
-    "pyreadr>=0.5",
 ]
 
 [build-system]

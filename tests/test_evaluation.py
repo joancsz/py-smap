@@ -40,3 +40,10 @@ def test_first_horizons():
     out = evaluate(_sim([d], list(range(1, 6))), obs)
     assert out.groupby("discretizacao", sort=False).horizonte.first().to_dict() == {"diaria": 0, "semanal": 1,
                                                                                      "mensal": 1}
+
+
+def test_monthly_blocks_use_only_observed_days():
+    d = pd.Timestamp("2000-01-01")
+    obs = pd.DataFrame({"data": [d, d + pd.Timedelta(days=2)], "nome": "A", "valor": [10.0, 30.0]})
+    out = evaluate(_sim([d], [10.0, 100.0, 30.0]), obs, weekly=False)
+    assert _get(out, "mensal", 1, "PBIAS") == pytest.approx(1.0)  # day 2 has no observation, so it is left out

@@ -26,4 +26,9 @@ def spatial(precip: pd.DataFrame, gauges: pd.DataFrame, by=("data",)) -> pd.Data
     """
     m = precip.merge(gauges.rename(columns={"valor": "peso"}), on="posto")
     m["valor"] = m["valor"] * m["peso"]
-    return m.groupby([*by, "nome"], as_index=False, sort=True)["valor"].sum()
+    out = m.groupby([*by, "nome"], as_index=False, sort=True)[["valor", "peso"]].sum()
+    short = out[out["peso"] < 0.995]  # a gauge without a value that day would silently shrink the rain
+    if len(short):
+        raise ValueError(f"rain: gauge values missing for sub-basin {short['nome'].iloc[0]} on "
+                         f"{dict(short[list(by)].iloc[0])}")
+    return out.drop(columns="peso")
