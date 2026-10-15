@@ -1,0 +1,81 @@
+# pysmap case file. Run with:  uv run pysmap run examples/case.yml -o out --ons-txt
+# Time series stay in ';'-separated CSV (or Parquet) files; paths are relative to this file.
+
+model:
+  runoff: pmur            # ai: fixed initial abstraction (classic SMAP/ONS) | pmur: Ai from free soil storage
+  etp: series             # climatology: 12 monthly values per sub-basin | series: observed + forecast files
+  assimilate: true        # false: run open-loop from `initial`
+  assimilate_etp: true    # also fit daily ETP multipliers (needs etp: series)
+
+run_dates:                # forecast dates and horizons (days)
+  - {date: 2017-06-01, horizon: 42}
+# or a regular range:
+# run_dates: {start: 2017-01-07, end: 2017-12-30, every: 7, horizon: 45}
+
+data:
+  precip_observed: ../tests/data/arq_entrada_pmur/psat.csv        # wide: data;<gauge>;...
+  precip_forecast: ../tests/data/arq_entrada_pmur/precipitacao_prevista.csv  # data_rodada;data_previsao;cenario;nome;valor
+  flow_observed: ../tests/data/arq_entrada_pmur/vazoes.csv         # wide: data;<sub-basin>;...
+  etp_observed: ../tests/data/arq_entrada_pmur/etp.csv
+  etp_forecast: ../tests/data/arq_entrada_pmur/evapotranspiracao_prevista.csv
+  # Without precip_forecast / etp_forecast the observed series is replayed as a 'historico' scenario.
+
+calibration:              # used by `pysmap calibrate` and `pysmap validate`
+  simulation: {start: 2015-06-01, end: 2017-05-31}   # model runs here
+  objective: {start: 2016-01-01, end: 2017-05-31}    # days scored (default: simulation)
+  exclude: [[2016-03-01, 2016-03-20]]                # days weighted 0
+  metric: kge             # dm | nse | mape | kge
+  # step: 0.001           # finite-difference step (R's ndeps); scale_by_upper: false; maxiter: 100
+  horizon: 14             # validate: forecast days; runs every Thursday (monthly when > 42)
+
+defaults:                 # merged under every sub-basin; a sub-basin's own values win
+  assimilation:
+    days: 31              # days assimilated before each forecast date
+    objective: dm         # dm (distance to MAPE=0, NSE=1) | nse | mape | kge
+    adjust_last_day: true # R's ajusta_precipitacao
+    bounds:               # rain weight multipliers; Ebin relative to its starting value
+      prec: [0.5, 2]
+      ebin: [0.8, 1.2]
+      # per month instead: prec: {1: [0.5, 2], 2: [0.5, 2], ..., 12: [0.6, 1.8]}  (all 12 months)
+
+sub_basins:
+  stoantjari:
+    area: 51343           # km2
+    params:
+      str: 163.8501991    # soil reservoir capacity (mm)
+      k2t: 10.24023213    # surface recession (days)
+      crec: 63.5775966    # groundwater recharge (%)
+      capc: 35.683596     # field capacity (% of str)
+      k_kt: 40.86764947   # base flow recession (days)
+      h1: 2000            # second surface outlet height (mm)
+      k2t2: 2000
+      h: 2000             # flood-plain overflow height (mm)
+      k1t: 2000
+      k3t: 2000
+      pcof: 0.897725217   # rain multiplier
+      ecof: 0.800710741   # ETP multiplier
+      ecof2: 0            # flood-plain ETP multiplier
+      lambda: 0.200786259 # pmur runoff only
+      pmur: 75.034039     # pmur runoff only
+      # ai: 1             # ai runoff only
+    kt:                   # temporal rain weights by lag: 2, 1 = future days, 0 = today, -1..-60 = past
+      2: 0.147321705
+      1: 0.334605199
+      0: 0.28584812
+      -1: 0.15346351
+      -2: 0.058678416
+      -3: 0.016376807
+      -4: 0.003248322
+      -5: 0.000425106
+      -6: 0.0000318
+    gauges: {stoantjari: 1.0}   # rain gauge -> weight (columns of precip_observed)
+    initial: {ebin: 888.11, supin: 1275.7, tuin: 70.82}   # base flow, surface flow (m3/s), soil moisture (%)
+    # etp_climatology: [5.6, 6.1, 5.6, 5.0, 4.2, 3.6, 3.8, 4.6, 5.4, 5.8, 5.7, 5.6]  # when model.etp: climatology
+    # assimilation: {days: 20}  # per sub-basin override of defaults
+    kt_shape: {alfa: 5, ex: 0.5}  # calibrate Kt as a Beta shape (R's Alfa/Beta)
+    calibration_bounds:           # what `pysmap calibrate` fits; [lo, hi] or {times: [lo, hi]}
+      str: {times: [0.5, 2]}
+      k2t: {times: [0.5, 2]}
+      pcof: [0.8, 1.2]
+      alfa: [0.5, 10]
+      ex: [0.05, 0.95]

@@ -1,0 +1,28 @@
+# Two sub-basins of smapOnsR's arq_entrada_pmur case (test fixture, generated once).
+model: {runoff: pmur, etp: series, assimilate: true, assimilate_etp: true}
+run_dates: [{date: 2017-06-01, horizon: 42}]
+data:
+  precip_observed: arq_entrada_pmur/psat.csv
+  precip_forecast: arq_entrada_pmur/precipitacao_prevista.csv
+  flow_observed: arq_entrada_pmur/vazoes.csv
+  etp_observed: arq_entrada_pmur/etp.csv
+  etp_forecast: arq_entrada_pmur/evapotranspiracao_prevista.csv
+defaults:
+  assimilation:
+    days: 31
+    objective: dm
+    adjust_last_day: true
+    bounds: {prec: [0.5, 2], ebin: [0.8, 1.2]}
+sub_basins:
+  stoantjari:
+    area: 51343.0
+    params: {str: 163.8501991, k2t: 10.24023213, crec: 63.5775966, capc: 35.683596, k_kt: 40.86764947, h1: 2000.0, k2t2: 2000.0, h: 2000.0, k1t: 2000.0, k3t: 2000.0, pcof: 0.897725217, ecof: 0.800710741, ecof2: 0.0, ai: 1.0, lambda: 0.200786259, pmur: 75.034039}
+    kt: {2: 0.147321705, 1: 0.334605199, 0: 0.28584812, -1: 0.15346351, -2: 0.058678416, -3: 0.016376807, -4: 0.003248322, -5: 0.000425106, -6: 3.18e-05, -7: 1.03e-06, -8: 7.65e-09, -9: 2.01e-12, -10: 8.92e-25}
+    gauges: {stoantjari: 1.0}
+    initial: {ebin: 888.11, supin: 1275.7, tuin: 70.82}
+  avermelha:
+    area: 20922.0
+    params: {str: 154.5055324, k2t: 9.639766061, crec: 6.832866911, capc: 16.68396255, k_kt: 126.4760035, h1: 200.0, k2t2: 10.0, h: 200.0, k1t: 10.0, k3t: 10.0, pcof: 1.003480924, ecof: 1.53174839, ecof2: 0.8, ai: 0.5, lambda: 2.931904924, pmur: 100.0}
+    kt: {1: 0.015339309, 0: 0.771345394, -1: 0.212661368, -2: 0.00065393, -3: 9.35e-13}
+    gauges: {avermelha: 1.0}
+    initial: {ebin: 147.06, supin: 204.76, tuin: 51.15}

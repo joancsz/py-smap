@@ -1,0 +1,34 @@
+[project]
+name = "pysmap"
+version = "0.1.0"
+description = "SMAP/ONS rainfall-runoff model: Python port of ONSBR/smapOnsR"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "numba>=0.60",
+    "pydantic>=2.6",
+    "pyyaml>=6",
+]
+
+[project.scripts]
+pysmap = "pysmap.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pyreadr>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pysmap"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: full chained runs on the R fixture cases"]
