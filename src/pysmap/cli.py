@@ -55,6 +55,8 @@ def _run(args):
         print(f"{name} done")
     if args.totalize:
         cfg = pd.read_csv(args.totalize, sep=";", encoding="utf-8-sig")
+        if "tabela" in cfg:  # SSARR tables are relative to configuracao.csv
+            cfg["tabela"] = [str(Path(args.totalize).parent / t) if isinstance(t, str) else t for t in cfg["tabela"]]
         totalize(pd.concat(qcalc), inputs.flow_observed, cfg).to_csv(out_dir / "totalizada.csv", sep=";",
                                                                      index=False, date_format="%Y-%m-%d")
         files.add(out_dir / "totalizada.csv")
