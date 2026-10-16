@@ -137,10 +137,52 @@ whose assimilation window or forecast lacks observed flow.
 ### Totalization
 
 `--totalize configuracao.csv` turns the sub-basins' incremental forecasts into total flow at each station of
-ONS's `configuracao.csv`, working upstream first. Flow is routed downstream by travel time or Muskingum.
-Regressed stations take another station's flow times a regression factor. The 90 days of observed flow
-before each run date warm up the routing. The output has incremental, total, total-without-delay and
-delayed-incremental flows per station.
+ONS's `configuracao.csv`, working upstream first. Each station's flow is routed into its downstream station
+with one of the propagation methods below. Regressed stations take another station's flow times a regression
+factor. The 90 days of observed flow before each run date warm up the routing. The output has incremental,
+total, total-without-delay and delayed-incremental flows per station.
+
+### Propagation methods (MPV)
+
+Besides smapOnsR's two routings, pysmap has the four methods of ONS's MPV (*Métodos de Propagação de
+Vazão*). An optional `metodo` column in `configuracao.csv` picks one per station:
+
+| `metodo` | Method | Columns | Kernel |
+|---|---|---|---|
+| blank | smapOnsR rule: travel time if `n == 0`, else Muskingum with raw coefficients | `tv` (h) or `n`, `c1`, `c2`, `c3` | `propagate_tv` / `propagate_muskingum` |
+| `sd` | Simples Defasagem: lag split over two days | `tv` (h) | `propagate_tv` |
+| `muskingum` | Muskingum in `nf` cascaded phases | `k` (days), `x` (< 0.5), `nf` | `muskingum_coeffs` → `propagate_muskingum` |
+| `ssarr` | SSARR storage routing, Newton solve per phase | `nf`, `tabela` (`vazao;tempo` CSV, flow in m³/s × storage time in h, path relative to `configuracao.csv`) | `propagate_ssarr` |
+| `todini` | Variable-parameter Muskingum-Cunge (Todini 2007), two-stage channel | `b1`, `b2` (m), `n1`, `n2` (Manning), `s0`, `hi` (bankfull depth, m), `comprimento` (m) | `propagate_todini` |
+
+Configs without `metodo` behave exactly as before. The kernels are plain NumPy/Numba functions
+(`propagate_*(upstream, downstream, ...)`) and can be called on their own:
+
+```python
+import numpy as np
+from pysmap.routing import propagate_ssarr
+
+out = propagate_ssarr(inflow, np.zeros_like(inflow), 3, table_q, table_t)
+```
+
+The MPV methods were ported from the official MPV binaries (`ONS.MPV.Business.*.Impl.dll`, .NET 5), which were
+decompiled to C#. Where the code differs from the MPV manual or the textbook, pysmap follows the code:
+
+- SSARR: the 100-iteration limit and the 0.11 m³/s tolerance are hard-coded. The file's `NumeroMaximoIteracoes`
+  and `MargemErro` are never used. Only the reach output is truncated to an integer, inherited from CPINS, and
+  intermediate phases are not. On day 0 every phase is set to the inflow.
+- Todini: each day runs two passes, the first with O(t+1) guessed as O(t) + I(t+1) − I(t). Co and D are blended
+  by each stage's share of the flow, and D uses MPV's `Qref / (c + β + B·X·S0)`. The value reported on day t is
+  O(t+1).
+- Muskingum: C0..C2 come from K/NF, x and Δt = 1 day. With x ≥ 0.5 MPV only warns, and pysmap does the same.
+  MPV rounds each phase to 4 decimals, which pysmap does not reproduce (< 1e-3 m³/s).
+- SD: same formula as smapOnsR's `propaga_tv`.
+
+`tests/data/mpv_golden.csv` holds the outputs of the real MPV executable for 8 reaches: SD at 13/36/48 h,
+Muskingum with the Lajeado and Bandeirantes parameters, SSARR with 2 and 3 phases, and Todini with the
+validation report's reach. `test_matches_mpv` checks pysmap against them within 1e-3 m³/s, the precision of
+MPV's 3-decimal output files. Not ported: MPV's deck files (`TOPOLOGIA_PROPAGACAO.txt`, `_VAZOES_ENTRADA.txt`,
+...) and their input validations. Use the `metodo` columns of `configuracao.csv` instead.
 
 ## Code structure
 
@@ -152,7 +194,7 @@ src/pysmap/
   metrics.py       weighted NSE, MAPE, DM, PBIAS, KGE, RMSE, correlation; OBJECTIVES maps funcao_objetivo codes
   assimilation.py  fits rain/ETP multipliers + Ebin/Supin before each forecast (R optim's L-BFGS-B settings)
   forecast.py      RunConfig presets, Inputs, chained runs per sub-basin (optionally in parallel)
-  routing.py       travel-time and Muskingum propagation, station totalization
+  routing.py       propagation (travel time, Muskingum, MPV's SSARR and Todini), station totalization
   calibration.py   parameter calibration against observed flow; Kt from a Beta shape
   studies.py       case-level calibration (writes the calibrated YAML) and Thursday backtests
   evaluation.py    forecast skill by lead time (daily, weekly, 30-day blocks)
@@ -179,7 +221,7 @@ How the modules depend on each other: `cli` → readers (`case` / `io` / `legacy
 | `metrics` | `metricas.R` |
 | `assimilation` | the 4 `assimilacao_*` functions and their objective functions |
 | `forecast` | the 6 `rodada_encadeada_*` / `rodada_sem_assimilacao` functions, chosen by `RunConfig` |
-| `routing` | `totaliza_previsao`, `propaga_tv`, `propaga_muskingum`, `ordem_afluencia` |
+| `routing` | `totaliza_previsao`, `propaga_tv`, `propaga_muskingum`, `ordem_afluencia`; plus ONS MPV's four methods (not in smapOnsR) |
 | `calibration` | `calibracao`, `calibracao[_pmur]_paralela`, `cria_kt` |
 | `studies` | the calibration screen (`executa_visualizador_calibracao`), `executa_validacao_calibracao` |
 | `evaluation` | `analisa_previsoes`, `agrega_semanal`, `agrega_mensal` |
@@ -202,6 +244,8 @@ for you to plot. Also not ported are `le_execucao` and `le_previsao_2`, which re
 - Legacy deck (`tests/data/legacy`, 22 sub-basins): P_da_Beira matches the official output within 0.04%
   (3492.81 against 3491.56; R gives 3493). The others are within 6%. The official program fits with a
   particle swarm, which reaches the same assimilation fit with a different base/surface flow split.
+- Routing matches the official MPV executable within 1e-3 m³/s for SD, Muskingum, SSARR and Todini
+  (see [Propagation methods](#propagation-methods-mpv)).
 - Kept on purpose: the per-variant `ndeps` and `parscale` values, the zero values in the first days of routing,
   and applying the assimilated rain weight only up to day d-2.
 - Changed:
